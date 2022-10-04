@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rand::{thread_rng, Rng};
+use rand::{rngs::ThreadRng, thread_rng, Rng};
 use serde::Serialize;
 use std::{collections::HashMap, time};
 use tokio::sync::broadcast::{self, Receiver, Sender};
@@ -110,24 +110,25 @@ struct OrderGenerator {
 }
 
 impl OrderGenerator {
-    fn gen_order(&mut self, sequence: u64) -> (Order, u64) {
-        let mut rng = thread_rng();
-        let trader_id: u64 = rng.gen_range(0..self.traders.len() as u64);
-        let trader: Trader = self.traders[trader_id as usize].clone();
-
-        let kind: OrderKind = match rng.gen_range(0..=1) {
+    fn get_kind(&self, rng: &mut ThreadRng) -> OrderKind {
+        match rng.gen_range(0..=1) {
             0 => OrderKind::Market,
             1 => OrderKind::Limit,
             _ => OrderKind::default(),
-        };
+        }
+    }
 
-        let side: OrderSide = match rng.gen_range(0..=1) {
+    fn get_side(&self, rng: &mut ThreadRng) -> OrderSide {
+        match rng.gen_range(0..=1) {
             0 => OrderSide::Buy,
             1 => OrderSide::Sell,
             _ => OrderSide::default(),
-        };
+        }
+    }
+
+    fn get_price(&self, rng: &mut ThreadRng, kind: &OrderKind, side: &OrderSide) -> f64 {
         let mut price: f64 = self.price;
-        if kind == OrderKind::Limit {
+        if *kind == OrderKind::Limit {
             match side {
                 OrderSide::Buy => price = self.price * (1.0 + rng.gen_range(-self.price_dev..0.0)),
                 OrderSide::Sell => price = self.price * (1.0 + rng.gen_range(0.0..self.price_dev)),
@@ -136,11 +137,113 @@ impl OrderGenerator {
 
         price = f64::trunc(price * 10_u64.pow(self.price_decimals) as f64)
             / 10_u64.pow(self.price_decimals) as f64;
+        price
+    }
 
+    fn get_qty(&self, rng: &mut ThreadRng) -> f64 {
         let mut qty: f64 = rng.gen_range(0.0..1.0) * rng.gen_range(0.0..self.qty_max);
         qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
             / 10_u64.pow(self.qty_decimals) as f64;
+        qty
+    }
 
+    fn cancel_order(
+        &mut self,
+        rng: &mut ThreadRng,
+        limit_orders: &mut HashMap<Uuid, Order>,
+        trader_id: usize,
+        sequence: u64,
+    ) -> Order {
+        let key_id = rng.gen_range(0..limit_orders.keys().len());
+        let (_key, order) = limit_orders.iter_mut().nth(key_id).unwrap();
+        let orders = &mut self.traders[trader_id as usize].orders;
+        orders.remove(&order.id);
+        order.id = Uuid::new_v4();
+        order.event = EventType::Cancel;
+        order.sequence = sequence;
+        order.time = chrono::offset::Utc::now();
+        order.to_owned()
+    }
+
+    fn new_order(
+        &mut self,
+        trader_id: u64,
+        kind: OrderKind,
+        side: OrderSide,
+        price: f64,
+        qty: f64,
+        sequence: u64,
+    ) -> Order {
+        let order: Order = Order::new(
+            trader_id,
+            kind,
+            side,
+            price,
+            qty,
+            self.instrument.clone(),
+            sequence,
+        );
+        let orders = &mut self.traders[trader_id as usize].orders;
+        orders.insert(order.id, order.clone());
+        order
+    }
+
+    fn update_order(
+        &mut self,
+        rng: &mut ThreadRng,
+        limit_orders: &mut HashMap<Uuid, Order>,
+        trader_id: usize,
+        sequence: u64,
+        price: f64,
+        qty: f64,
+    ) -> Order {
+        let key_id = rng.gen_range(0..limit_orders.keys().len());
+        let (key, order) = limit_orders.iter_mut().nth(key_id).unwrap();
+        let orders = &mut self.traders[trader_id as usize].orders;
+        let mut updated_price = price;
+        let mut updated_qty = qty;
+        let (update_price, update_qty) = match rng.gen_range(0..=1) {
+            0 => {
+                updated_price = self.price * (1.0 + rng.gen_range(-self.price_dev..self.price_dev));
+                updated_price = f64::trunc(price * 10_u64.pow(self.price_decimals) as f64)
+                    / 10_u64.pow(self.price_decimals) as f64;
+                order.price = updated_price;
+                (Some(updated_price), None)
+            }
+            1 => {
+                updated_qty = rng.gen_range(0.0..1.0) * rng.gen_range(0.0..self.qty_max);
+                updated_qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
+                    / 10_u64.pow(self.qty_decimals) as f64;
+                order.qty = updated_qty;
+                (None, Some(updated_qty))
+            }
+            _ => (None, None),
+        };
+        orders.insert(*key, order.clone());
+
+        order.id = Uuid::new_v4();
+        match update_price {
+            Some(price) => order.price = price,
+            None => {}
+        };
+        match update_qty {
+            Some(qty) => order.qty = qty,
+            None => {}
+        };
+        order.event = EventType::Update;
+        order.sequence = sequence;
+        order.time = chrono::offset::Utc::now();
+        order.to_owned()
+    }
+
+    fn gen_order(&mut self, sequence: u64) -> (Order, u64) {
+        let mut rng = thread_rng();
+        let trader_id: u64 = rng.gen_range(0..self.traders.len() as u64);
+        let trader: Trader = self.traders[trader_id as usize].clone();
+        let kind = self.get_kind(&mut rng);
+        let side = self.get_side(&mut rng);
+        let price: f64 = self.get_price(&mut rng, &kind, &side);
+        let qty: f64 = self.get_qty(&mut rng);
         let latency: u64 = rng.gen_range(self.latency_min..self.latency_max);
 
         let has_limit_orders: bool = trader
@@ -148,80 +251,24 @@ impl OrderGenerator {
             .clone()
             .into_values()
             .any(|order| order.kind == OrderKind::Limit);
-        let limit_orders: HashMap<Uuid, Order> = trader
-            .orders
-            .clone()
-            .into_iter()
-            .filter(|(_k, v)| v.kind == OrderKind::Limit)
-            .collect();
 
         if trader.orders.len() > 0 && has_limit_orders {
+            let mut limit_orders: HashMap<Uuid, Order> = trader
+                .orders
+                .into_iter()
+                .filter(|(_k, v)| v.kind == OrderKind::Limit)
+                .collect();
             let event = match rng.gen_range(0..=2) {
-                0 => {
-                    let key_id = rng.gen_range(0..limit_orders.keys().len());
-                    let (_key, order) = limit_orders.into_iter().nth(key_id).unwrap();
-                    let orders = &mut self.traders[trader_id as usize].orders;
-                    orders.remove(&order.id);
-                    let mut new_order = order.clone();
-                    new_order.id = Uuid::new_v4();
-                    new_order.event = EventType::Cancel;
-                    new_order.sequence = sequence;
-                    new_order.time = chrono::offset::Utc::now();
-                    new_order
-                }
-                1 => {
-                    let order: Order = Order::new(
-                        trader_id,
-                        kind,
-                        side,
-                        price,
-                        qty,
-                        self.instrument.clone(),
-                        sequence,
-                    );
-                    let orders = &mut self.traders[trader_id as usize].orders;
-                    orders.insert(order.id.clone(), order.clone());
-                    order
-                }
-                2 => {
-                    let key_id = rng.gen_range(0..limit_orders.keys().len());
-                    let (key, mut order) = limit_orders.into_iter().nth(key_id).unwrap();
-                    let orders = &mut self.traders[trader_id as usize].orders;
-
-                    let (update_price, update_qty) = match rng.gen_range(0..=1) {
-                        0 => {
-                            price =
-                                self.price * (1.0 + rng.gen_range(-self.price_dev..self.price_dev));
-                            price = f64::trunc(price * 10_u64.pow(self.price_decimals) as f64)
-                                / 10_u64.pow(self.price_decimals) as f64;
-                            order.price = price;
-                            (Some(price), None)
-                        }
-                        1 => {
-                            qty = rng.gen_range(0.0..1.0) * rng.gen_range(0.0..self.qty_max);
-                            qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
-                                / 10_u64.pow(self.qty_decimals) as f64;
-                            order.qty = qty;
-                            (None, Some(qty))
-                        }
-                        _ => (None, None),
-                    };
-                    orders.insert(key.clone(), order.clone());
-
-                    order.id = Uuid::new_v4();
-                    match update_price {
-                        Some(price) => order.price = price,
-                        None => {}
-                    };
-                    match update_qty {
-                        Some(qty) => order.qty = qty,
-                        None => {}
-                    };
-                    order.event = EventType::Update;
-                    order.sequence = sequence;
-                    order.time = chrono::offset::Utc::now();
-                    order
-                }
+                0 => self.cancel_order(&mut rng, &mut limit_orders, trader_id as usize, sequence),
+                1 => self.new_order(trader_id, kind, side, price, qty, sequence),
+                2 => self.update_order(
+                    &mut rng,
+                    &mut limit_orders,
+                    trader_id as usize,
+                    sequence,
+                    price,
+                    qty,
+                ),
                 _ => Order::default(),
             };
 
@@ -238,7 +285,7 @@ impl OrderGenerator {
             );
             // self.manage_order(trader_id, &order);
             let orders = &mut self.traders[trader_id as usize].orders;
-            orders.insert(order.id.clone(), order.clone());
+            orders.insert(order.id, order.clone());
             (order, latency)
         }
     }
