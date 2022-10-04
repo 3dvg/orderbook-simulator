@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use rand::{thread_rng, Rng};
-use rand_distr::{Normal, Distribution};
 use serde::Serialize;
-use std::{collections::HashMap, time, hash::Hash};
+use std::{collections::HashMap, time};
 use tokio::sync::broadcast::{self, Receiver, Sender};
 use uuid::Uuid;
 
@@ -21,13 +20,6 @@ pub struct UpdateOrder {
     qty: Option<f64>,
     time: i64,
 }
-// #[derive(Debug, Clone, Serialize)]
-// pub enum OrderEvent {
-//     Cancel(Order),
-//     New(Order),
-//     Update(Order),
-//     Empty,
-// }
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub enum EventType {
@@ -136,7 +128,6 @@ impl OrderGenerator {
         };
         let mut price: f64 = self.price;
         if kind == OrderKind::Limit {
-            let distribution = Normal::new(0.0, self.price_dev).unwrap();
             match side {
                 OrderSide::Buy => price = self.price * (1.0 + rng.gen_range(-self.price_dev..0.0)),
                 OrderSide::Sell => price = self.price * (1.0 + rng.gen_range(0.0..self.price_dev)),
@@ -152,13 +143,19 @@ impl OrderGenerator {
 
         let latency: u64 = rng.gen_range(self.latency_min..self.latency_max);
 
-        let has_limit_orders: bool = trader.orders.clone().into_values().any(|order| order.kind == OrderKind::Limit);
-        let limit_orders: HashMap<Uuid, Order> = trader.orders.clone().into_iter().filter(|(_k, v)| v.kind == OrderKind::Limit).collect();
+        let has_limit_orders: bool = trader
+            .orders
+            .clone()
+            .into_values()
+            .any(|order| order.kind == OrderKind::Limit);
+        let limit_orders: HashMap<Uuid, Order> = trader
+            .orders
+            .clone()
+            .into_iter()
+            .filter(|(_k, v)| v.kind == OrderKind::Limit)
+            .collect();
 
         if trader.orders.len() > 0 && has_limit_orders {
-            // println!("---- {:#?}", trader.orders);
-            // println!("===> {:#?}", has_limit_orders);
-            // println!("@@@> {:#?}", limit_orders);
             let event = match rng.gen_range(0..=2) {
                 0 => {
                     let key_id = rng.gen_range(0..limit_orders.keys().len());
@@ -211,20 +208,19 @@ impl OrderGenerator {
                     };
                     orders.insert(key.clone(), order.clone());
 
-                    let mut new_order = order.clone();
-                    new_order.id = Uuid::new_v4();
+                    order.id = Uuid::new_v4();
                     match update_price {
-                        Some(price) => new_order.price = price,
+                        Some(price) => order.price = price,
                         None => {}
                     };
                     match update_qty {
-                        Some(qty) => new_order.qty = qty,
+                        Some(qty) => order.qty = qty,
                         None => {}
                     };
-                    new_order.event = EventType::Update;
-                    new_order.sequence = sequence;
-                    new_order.time = chrono::offset::Utc::now();
-                    new_order
+                    order.event = EventType::Update;
+                    order.sequence = sequence;
+                    order.time = chrono::offset::Utc::now();
+                    order
                 }
                 _ => Order::default(),
             };
@@ -301,10 +297,10 @@ impl OrderSimulation {
         let n_chunks = 100;
         let mut order_chunks = Vec::with_capacity(n_chunks);
         for chunk in 1..=n_chunks {
-            let prior = simulation.generator.max_orders/n_chunks as u64 * (chunk as u64 - 1);
-            let next = simulation.generator.max_orders/n_chunks as u64 * chunk as u64;
+            let prior = simulation.generator.max_orders / n_chunks as u64 * (chunk as u64 - 1);
+            let next = simulation.generator.max_orders / n_chunks as u64 * chunk as u64;
             order_chunks.push(prior..next);
-        } 
+        }
         let _silly_receiver = self.sender.subscribe();
         for chunk in order_chunks {
             let mut simulation = self.clone();
@@ -346,13 +342,24 @@ impl Default for OrderSimulation {
         // gen
         // Self::new(1_000_000, 100_000, 142.45, 0.5, 2, 0, 1, 10_000.0, 0, "AAPL".to_string())
         // dev
-        Self::new(1_000, 100, 142.45, 0.5, 2, 0, 1, 10_000.0, 0, "AAPL".to_string())
+        Self::new(
+            1_000,
+            100,
+            142.45,
+            0.5,
+            2,
+            0,
+            1,
+            10_000.0,
+            0,
+            "AAPL".to_string(),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::*;
+    // use crate::*;
 
     #[test]
     fn new_order() {
