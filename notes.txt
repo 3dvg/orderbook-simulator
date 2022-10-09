@@ -7,3 +7,13 @@ parallelize simulator
         channel capacity at 1_000_000 and generated 993_895 orders 
 
 start with orderbook btreemap(double-linked-list) // btreemap_slab(?) // btreemap(u64, vec<usize> OR queue? ) 
+
+inline function
+
+generate too much unncessary data i think with simulator like trader
+
+
+
+error[E0554]: #![feature] may not be used on the stable release channel
+rustup install nightly
+rustup run nightly cargo bench 

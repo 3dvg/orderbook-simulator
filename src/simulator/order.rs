@@ -66,7 +66,7 @@ pub struct Order {
     /// sequence number of the order
     sequence: u64,
     /// time the order was generated in ns
-    pub time: DateTime<Utc>,
+    time: DateTime<Utc>,
 }
 
 impl Order {
@@ -92,6 +92,10 @@ impl Order {
             sequence,
             time: chrono::offset::Utc::now(),
         }
+    }
+
+    pub fn get_price(&self) -> f64 {
+        self.price.clone()
     }
 }
 
@@ -141,7 +145,8 @@ impl OrderGenerator {
     }
 
     fn get_qty(&self, rng: &mut ThreadRng) -> f64 {
-        let mut qty: f64 = rng.gen_range(0.0..1.0) * rng.gen_range(0.0..self.qty_max);
+        // let mut qty: f64 = rng.gen_range(0.0..1.0) * rng.gen_range(0.0..self.qty_max);
+        let mut qty: f64 = rng.gen_range(1.0..self.qty_max);
         qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
             / 10_u64.pow(self.qty_decimals) as f64;
         qty
@@ -211,7 +216,7 @@ impl OrderGenerator {
                 (Some(updated_price), None)
             }
             1 => {
-                updated_qty = rng.gen_range(0.0..1.0) * rng.gen_range(0.0..self.qty_max);
+                updated_qty = rng.gen_range(0.0..self.qty_max);
                 updated_qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
                     / 10_u64.pow(self.qty_decimals) as f64;
                 order.qty = updated_qty;
@@ -274,18 +279,7 @@ impl OrderGenerator {
 
             (event, latency)
         } else {
-            let order: Order = Order::new(
-                trader_id,
-                kind,
-                side,
-                price,
-                qty,
-                self.instrument.clone(),
-                sequence,
-            );
-            // self.manage_order(trader_id, &order);
-            let orders = &mut self.traders[trader_id as usize].orders;
-            orders.insert(order.id, order.clone());
+            let order = self.new_order(trader_id, kind, side, price, qty, sequence);
             (order, latency)
         }
     }
@@ -341,31 +335,32 @@ impl OrderSimulation {
 
     pub async fn run(&self) -> Receiver<Order> {
         let simulation = self.clone();
-        let n_chunks = 100;
-        let mut order_chunks = Vec::with_capacity(n_chunks);
-        for chunk in 1..=n_chunks {
-            let prior = simulation.generator.max_orders / n_chunks as u64 * (chunk as u64 - 1);
-            let next = simulation.generator.max_orders / n_chunks as u64 * chunk as u64;
-            order_chunks.push(prior..next);
-        }
-        let _silly_receiver = self.sender.subscribe();
+        let n_chunks: u64 = 1000;
+        let max_orders = simulation.generator.max_orders;
+        let step = max_orders / n_chunks;
+        let order_chunks = (0..=max_orders).step_by(step as usize).map(|current| (current..current+step));
+        let mut tasks = vec!();
+
+        let receiver = self.sender.subscribe();
         for chunk in order_chunks {
             let mut simulation = self.clone();
             println!("running chunk {:?}...", chunk);
-            tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 for i in chunk.clone() {
-                    let (event, latency) = simulation.generator.gen_order(i);
+                    let (event, _) = simulation.generator.gen_order(i);
                     let _ = simulation
                         .sender
                         .send(event)
                         .map(|_| {})
                         .map_err(|err| println!("Error: {}", err));
-                    tokio::time::sleep(time::Duration::from_nanos(latency)).await;
+                    // tokio::time::sleep(time::Duration::from_nanos(latency)).await;
                 }
                 println!("finished chunk {:?}", chunk);
-            });
+                true
+            }));
         }
-        self.sender.subscribe()
+        let join_result = futures::future::join_all(tasks).await;
+        receiver
     }
 
     pub fn get_receiver(&self) -> Receiver<Order> {
