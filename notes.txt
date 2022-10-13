@@ -4,7 +4,9 @@ parallelize simulator
     running it async, same simulation took 2min22secs, on 10 tasks
 
     tested Self::new(1_000_000, 100_000, 142.45, 0.5, 2, 0, 1, 10_000.0, 0, "AAPL".to_string()) with 100 tasks,took 1min21sec
-        channel capacity at 1_000_000 and generated 993_895 orders 
+        channel capacity at 1_000_000 and generated 993_895 orders, fixed this, silly subscripber was eating some orders
+
+    generates around 100k orders per second 
 
 start with orderbook btreemap(double-linked-list) // btreemap_slab(?) // btreemap(u64, vec<usize> OR queue? ) 
 

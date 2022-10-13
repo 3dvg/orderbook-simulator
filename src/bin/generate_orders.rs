@@ -1,4 +1,3 @@
-// use app::gbm;
 use app::OrderSimulation;
 use csv::Writer;
 use std::error::Error;
@@ -10,6 +9,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut wtr = Writer::from_path("./order_simulations/orders.csv")?;
     while let Ok(message) = receiver.recv().await {
+        println!("{:?}", message);
         wtr.serialize(message)?;
         wtr.flush()?;
         if receiver.is_empty() {

@@ -1,5 +1,7 @@
+use serde::Serialize;
+use uuid::Uuid;
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize)]
 pub enum Side {
     Bid,
     Ask,
@@ -19,65 +21,78 @@ impl std::ops::Not for Side {
 #[derive(Debug, Copy, Clone)]
 pub enum OrderType {
     Market {
-        id: u128,
+        id: Uuid,
         side: Side,
-        qty: u64,
+        qty: f64,
     },
     Limit {
-        id: u128,
+        id: Uuid,
         side: Side,
-        qty: u64,
-        price: u64,
+        qty: f64,
+        price: f64,
     },
     Cancel {
-        id: u128,
+        id: Uuid,
     },
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Serialize)]
 pub enum OrderEvent {
     Unfilled {
-        id: u128,
+        id: Uuid,
     },
     Placed {
-        id: u128,
+        id: Uuid,
     },
     Canceled {
-        id: u128,
+        id: Uuid,
     },
     PartiallyFilled {
-        id: u128,
-        filled_qty: u64,
+        id: Uuid,
+        filled_qty: f64,
         fills: Vec<FillMetadata>,
     },
     Filled {
-        id: u128,
-        filled_qty: u64,
+        id: Uuid,
+        filled_qty: f64,
         fills: Vec<FillMetadata>,
     },
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Serialize)]
 pub struct FillMetadata {
-    pub order_1: u128,
-    pub order_2: u128,
-    pub qty: u64,
-    pub price: u64,
+    pub order_1: Uuid,
+    pub order_2: Uuid,
+    pub qty: f64,
+    pub price: f64,
     pub taker_side: Side,
     pub total_fill: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct Trade {
-    pub total_qty: u64,
+    pub total_qty: f64,
     pub avg_price: f64,
-    pub last_price: u64,
-    pub last_qty: u64,
+    pub last_price: f64,
+    pub last_qty: f64,
 }
 
 #[derive(Debug, PartialEq, Default)]
 pub struct LimitOrder {
-    pub id: u128,
-    pub qty: u64,
-    pub price: u64,
+    pub id: Uuid,
+    pub qty: f64,
+    pub price: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BookDepth {
+    pub levels: usize,
+    pub asks: Vec<BookLevel>,
+    pub bids: Vec<BookLevel>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BookLevel {
+    pub price: f64,
+    pub qty: f64,
 }

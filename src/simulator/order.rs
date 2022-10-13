@@ -1,7 +1,8 @@
+use anyhow::Error;
 use chrono::{DateTime, Utc};
 use rand::{rngs::ThreadRng, thread_rng, Rng};
-use serde::Serialize;
-use std::{collections::HashMap, time};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, ops::Range};
 use tokio::sync::broadcast::{self, Receiver, Sender};
 use uuid::Uuid;
 
@@ -21,7 +22,7 @@ pub struct UpdateOrder {
     time: i64,
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub enum EventType {
     Cancel,
     #[default]
@@ -29,44 +30,33 @@ pub enum EventType {
     Update,
 }
 
-#[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
-enum OrderKind {
-    #[default]
+#[derive(Debug, Default, Clone, Serialize, PartialEq, Eq, Deserialize)]
+pub enum OrderKind {
     Market,
+    #[default]
     Limit,
 }
 
-#[derive(Debug, Default, Clone, Serialize)]
-enum OrderSide {
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub enum OrderSide {
     #[default]
     Buy,
     Sell,
 }
 /// A single order event
-#[derive(Debug, Default, Clone, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Order {
-    /// event id
-    id: Uuid,
-    /// order id
-    order_id: Uuid,
-    /// positive integer to identify a trader
-    trader: u64,
-    /// type of event, delete, new, update
-    event: EventType,
-    /// type of order, 0 for market, 1 for limit
-    kind: OrderKind,
-    /// side of the order, 0 for sell, 1 for buy
-    side: OrderSide,
-    /// price of the order
-    price: f64,
-    /// quantity of the order
-    qty: f64,
-    /// the instrument to trade,
-    instrument: String,
-    /// sequence number of the order
-    sequence: u64,
-    /// time the order was generated in ns
-    time: DateTime<Utc>,
+    pub id: Uuid,
+    pub order_id: Uuid,
+    pub trader: u64,
+    pub event: EventType,
+    pub kind: OrderKind,
+    pub side: OrderSide,
+    pub price: f64,
+    pub qty: f64,
+    pub instrument: String,
+    pub sequence: u64,
+    pub time: DateTime<Utc>,
 }
 
 impl Order {
@@ -93,15 +83,12 @@ impl Order {
             time: chrono::offset::Utc::now(),
         }
     }
-
-    pub fn get_price(&self) -> f64 {
-        self.price.clone()
-    }
 }
 
 #[derive(Debug, Clone)]
 struct OrderGenerator {
     max_orders: u64,
+    n_tasks: u64,
     traders: Vec<Trader>,
     price: f64,
     price_dev: f64,
@@ -115,10 +102,17 @@ struct OrderGenerator {
 
 impl OrderGenerator {
     fn get_kind(&self, rng: &mut ThreadRng) -> OrderKind {
-        match rng.gen_range(0..=1) {
-            0 => OrderKind::Market,
-            1 => OrderKind::Limit,
-            _ => OrderKind::default(),
+        // match rng.gen_range(0..=1) {
+        //     0 => OrderKind::Market,
+        //     1 => OrderKind::Limit,
+        //     _ => OrderKind::default(),
+        // }
+        //70% provide liquidity
+        let n =  rng.gen_range(0.00..0.99);
+        if n < 0.7 {
+            OrderKind::Limit
+        } else {
+            OrderKind::Market
         }
     }
 
@@ -144,9 +138,13 @@ impl OrderGenerator {
         price
     }
 
-    fn get_qty(&self, rng: &mut ThreadRng) -> f64 {
-        // let mut qty: f64 = rng.gen_range(0.0..1.0) * rng.gen_range(0.0..self.qty_max);
-        let mut qty: f64 = rng.gen_range(1.0..self.qty_max);
+    fn get_qty(&self, rng: &mut ThreadRng, kind: &OrderKind) -> f64 {
+        // If is market, the qty will be no more than half the qty for limits, with a mean of 1/4th the size 
+        // of limits. This will make the OB liquidity to increase
+        let mut qty = match kind {
+            OrderKind::Limit => rng.gen_range(1.0..self.qty_max),
+            OrderKind::Market => rng.gen_range(0.0..0.5) * rng.gen_range(1.0..self.qty_max)
+        };
         qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
             / 10_u64.pow(self.qty_decimals) as f64;
         qty
@@ -199,28 +197,28 @@ impl OrderGenerator {
         limit_orders: &mut HashMap<Uuid, Order>,
         trader_id: usize,
         sequence: u64,
-        price: f64,
-        qty: f64,
+        mut price: f64,
+        mut qty: f64,
     ) -> Order {
         let key_id = rng.gen_range(0..limit_orders.keys().len());
         let (key, order) = limit_orders.iter_mut().nth(key_id).unwrap();
         let orders = &mut self.traders[trader_id as usize].orders;
-        let mut updated_price = price;
-        let mut updated_qty = qty;
+        // let mut updated_price = price;
+        // let mut updated_qty = qty;
         let (update_price, update_qty) = match rng.gen_range(0..=1) {
             0 => {
-                updated_price = self.price * (1.0 + rng.gen_range(-self.price_dev..self.price_dev));
-                updated_price = f64::trunc(price * 10_u64.pow(self.price_decimals) as f64)
+                // updated_price = self.price * (1.0 + rng.gen_range(-self.price_dev..self.price_dev));
+                price = f64::trunc(price * 10_u64.pow(self.price_decimals) as f64)
                     / 10_u64.pow(self.price_decimals) as f64;
-                order.price = updated_price;
-                (Some(updated_price), None)
+                order.price = price;
+                (Some(price), None)
             }
             1 => {
-                updated_qty = rng.gen_range(0.0..self.qty_max);
-                updated_qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
+                // updated_qty = rng.gen_range(0.0..self.qty_max);
+                qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
                     / 10_u64.pow(self.qty_decimals) as f64;
-                order.qty = updated_qty;
-                (None, Some(updated_qty))
+                order.qty = qty;
+                (None, Some(qty))
             }
             _ => (None, None),
         };
@@ -248,7 +246,7 @@ impl OrderGenerator {
         let kind = self.get_kind(&mut rng);
         let side = self.get_side(&mut rng);
         let price: f64 = self.get_price(&mut rng, &kind, &side);
-        let qty: f64 = self.get_qty(&mut rng);
+        let qty: f64 = self.get_qty(&mut rng, &kind);
         let latency: u64 = rng.gen_range(self.latency_min..self.latency_max);
 
         let has_limit_orders: bool = trader
@@ -301,6 +299,7 @@ impl OrderSimulation {
     pub fn new(
         max_orders: u64,
         n_traders: u64,
+        n_tasks: u64,
         price: f64,
         price_dev: f64,
         price_decimals: u32,
@@ -320,6 +319,7 @@ impl OrderSimulation {
         let traders: Vec<Trader> = generate_traders(n_traders);
         let generator = OrderGenerator {
             max_orders,
+            n_tasks,
             traders,
             price,
             price_dev,
@@ -335,37 +335,42 @@ impl OrderSimulation {
 
     pub async fn run(&self) -> Receiver<Order> {
         let simulation = self.clone();
-        let n_chunks: u64 = 1000;
+        let n_chunks = self.generator.n_tasks;
         let max_orders = simulation.generator.max_orders;
         let step = max_orders / n_chunks;
-        let order_chunks = (0..=max_orders).step_by(step as usize).map(|current| (current..current+step));
-        let mut tasks = vec!();
+        let order_chunks = (0..=max_orders - step)
+            .step_by(step as usize)
+            .map(|current| (current..current + step));
+
+        let mut tasks = vec![];
 
         let receiver = self.sender.subscribe();
         for chunk in order_chunks {
-            let mut simulation = self.clone();
+            let simulation = self.clone();
             println!("running chunk {:?}...", chunk);
-            tasks.push(tokio::spawn(async move {
-                for i in chunk.clone() {
-                    let (event, _) = simulation.generator.gen_order(i);
-                    let _ = simulation
-                        .sender
-                        .send(event)
-                        .map(|_| {})
-                        .map_err(|err| println!("Error: {}", err));
-                    // tokio::time::sleep(time::Duration::from_nanos(latency)).await;
-                }
-                println!("finished chunk {:?}", chunk);
-                true
-            }));
+            let task = tokio::spawn(run_orders(chunk, simulation));
+            tasks.push(task);
         }
-        let join_result = futures::future::join_all(tasks).await;
+        let _join_result = futures::future::join_all(tasks).await;
         receiver
     }
 
     pub fn get_receiver(&self) -> Receiver<Order> {
         self.sender.subscribe()
     }
+}
+
+async fn run_orders(chunk: Range<u64>, mut simulation: OrderSimulation) -> Result<(), Error> {
+    for i in chunk {
+        let (event, _) = simulation.generator.gen_order(i);
+        let _ = simulation
+            .sender
+            .send(event)
+            .map(|_| {})
+            .map_err(|err| println!("Error: {}", err));
+        // tokio::time::sleep(time::Duration::from_nanos(latency)).await;
+    }
+    Ok(())
 }
 
 fn generate_traders(n_traders: u64) -> Vec<Trader> {
@@ -382,13 +387,13 @@ fn generate_traders(n_traders: u64) -> Vec<Trader> {
 impl Default for OrderSimulation {
     fn default() -> Self {
         // gen
-        // Self::new(1_000_000, 100_000, 142.45, 0.5, 2, 0, 1, 10_000.0, 0, "AAPL".to_string())
-        // dev
+        // Self::new(1_000_000, 100_000, 1000, 142.45, 0.5, 2, 0, 1, 10_000.0, 0, "AAPL".to_string())
         Self::new(
-            1_000,
-            100,
-            142.45,
-            0.5,
+            10_000_000,
+            1_000_000,
+            1000,
+            100.0,
+            0.02,
             2,
             0,
             1,
@@ -396,6 +401,33 @@ impl Default for OrderSimulation {
             0,
             "AAPL".to_string(),
         )
+        // Self::new(
+        //     1_000_000,
+        //     100_000,
+        //     1000,
+        //     100.0,
+        //     0.02,
+        //     2,
+        //     0,
+        //     1,
+        //     10_000.0,
+        //     0,
+        //     "AAPL".to_string(),
+        // )
+        // dev
+        // Self::new(
+        //     1000,
+        //     10,
+        //     10,
+        //     142.45,
+        //     0.5,
+        //     2,
+        //     0,
+        //     1,
+        //     10_000.0,
+        //     0,
+        //     "AAPL".to_string(),
+        // )
     }
 }
 

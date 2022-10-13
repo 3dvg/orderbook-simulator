@@ -1,3 +1,3 @@
-pub mod orderbook;
 pub mod arena;
 pub mod models;
+pub mod orderbook;

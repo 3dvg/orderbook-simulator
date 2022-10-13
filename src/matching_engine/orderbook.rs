@@ -1,21 +1,23 @@
+use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 use crate::matching_engine::arena::OrderArena;
-use crate::matching_engine::models::{
-    FillMetadata, OrderEvent, OrderType, Side, Trade,
-};
+use crate::matching_engine::models::{FillMetadata, OrderEvent, OrderType, Side, Trade};
 
-const DEFAULT_ARENA_CAPACITY: usize = 10_000;
-const DEFAULT_QUEUE_CAPACITY: usize = 10;
+use super::models::{BookLevel, BookDepth};
+
+const DEFAULT_ARENA_CAPACITY: usize = 1_000_000;
+const DEFAULT_QUEUE_CAPACITY: usize = 100_000;
 
 #[derive(Debug)]
 pub struct OrderBook {
     last_trade: Option<Trade>,
-    traded_volume: u64,
-    best_ask: Option<u64>,
-    best_bid: Option<u64>,
-    asks: BTreeMap<u64, Vec<usize>>,
-    bids: BTreeMap<u64, Vec<usize>>,
+    traded_volume: f64,
+    best_ask: Option<OrderedFloat<f64>>,
+    best_bid: Option<OrderedFloat<f64>>,
+    asks: BTreeMap<OrderedFloat<f64>, Vec<usize>>,
+    bids: BTreeMap<OrderedFloat<f64>, Vec<usize>>,
     arena: OrderArena,
     default_queue_capacity: usize,
 }
@@ -27,13 +29,10 @@ impl Default for OrderBook {
 }
 
 impl OrderBook {
-    pub fn new(
-        arena_capacity: usize,
-        queue_capacity: usize,
-    ) -> Self {
+    pub fn new(arena_capacity: usize, queue_capacity: usize) -> Self {
         Self {
             last_trade: None,
-            traded_volume: 0,
+            traded_volume: 0.0,
             best_ask: None,
             best_bid: None,
             asks: BTreeMap::new(),
@@ -43,18 +42,22 @@ impl OrderBook {
         }
     }
 
+    pub fn get_asks(&self) -> BTreeMap<OrderedFloat<f64>, Vec<usize>> {
+        self.asks.clone()
+    }
+
     #[inline(always)]
-    pub fn best_ask(&self) -> Option<u64> {
+    pub fn best_ask(&self) -> Option<OrderedFloat<f64>> {
         self.best_ask
     }
 
     #[inline(always)]
-    pub fn best_bid(&self) -> Option<u64> {
+    pub fn best_bid(&self) -> Option<OrderedFloat<f64>> {
         self.best_bid
     }
 
     #[inline(always)]
-    pub fn spread(&self) -> Option<u64> {
+    pub fn spread(&self) -> Option<OrderedFloat<f64>> {
         match (self.best_bid, self.best_ask) {
             (Some(b), Some(a)) => Some(a - b),
             _ => None,
@@ -67,52 +70,46 @@ impl OrderBook {
     }
 
     #[inline(always)]
-    pub fn traded_volume(&self) -> u64 {
+    pub fn traded_volume(&self) -> f64 {
         self.traded_volume
     }
 
     pub fn execute(&mut self, event: OrderType) -> OrderEvent {
         let event = self._execute(event);
-
-        match event.clone() {
-            OrderEvent::Filled {
-                id: _,
-                filled_qty,
-                fills,
-            } => {
-                self.traded_volume += filled_qty;
-                let last_fill = fills.last().unwrap();
-                self.last_trade = Some(Trade {
-                    total_qty: filled_qty,
-                    avg_price: fills
-                        .iter()
-                        .map(|fm| fm.price * fm.qty)
-                        .sum::<u64>() as f64
-                        / (filled_qty as f64),
-                    last_qty: last_fill.qty,
-                    last_price: last_fill.price,
-                });
-            }
-            OrderEvent::PartiallyFilled {
-                id: _,
-                filled_qty,
-                fills,
-            } => {
-                self.traded_volume += filled_qty;
-                let last_fill = fills.last().unwrap();
-                self.last_trade = Some(Trade {
-                    total_qty: filled_qty,
-                    avg_price: fills
-                        .iter()
-                        .map(|fm| fm.price * fm.qty)
-                        .sum::<u64>() as f64
-                        / (filled_qty as f64),
-                    last_qty: last_fill.qty,
-                    last_price: last_fill.price,
-                });
-            }
-            _ => {}
-        }
+        // uncomment to track total_volume, last_trade
+        // match event.clone() {
+        //     OrderEvent::Filled {
+        //         id: _,
+        //         filled_qty,
+        //         fills,
+        //     } => {
+        //         self.traded_volume += filled_qty;
+        //         let last_fill = fills.last().unwrap();
+        //         self.last_trade = Some(Trade {
+        //             total_qty: filled_qty,
+        //             avg_price: fills.iter().map(|fm| fm.price * fm.qty).sum::<f64>() as f64
+        //                 / (filled_qty as f64),
+        //             last_qty: last_fill.qty,
+        //             last_price: last_fill.price,
+        //         });
+        //     }
+        //     OrderEvent::PartiallyFilled {
+        //         id: _,
+        //         filled_qty,
+        //         fills,
+        //     } => {
+        //         self.traded_volume += filled_qty;
+        //         let last_fill = fills.last().unwrap();
+        //         self.last_trade = Some(Trade {
+        //             total_qty: filled_qty,
+        //             avg_price: fills.iter().map(|fm| fm.price * fm.qty).sum::<f64>() as f64
+        //                 / (filled_qty as f64),
+        //             last_qty: last_fill.qty,
+        //             last_price: last_fill.price,
+        //         });
+        //     }
+        //     _ => {}
+        // }
         event
     }
 
@@ -142,8 +139,8 @@ impl OrderBook {
                 qty,
                 price,
             } => {
-                let (fills, partial, filled_qty) =
-                    self.limit(id, side, qty, price);
+                let (fills, partial, filled_qty) = self.limit(id, side, qty, price);
+
                 if fills.is_empty() {
                     OrderEvent::Placed { id }
                 } else if partial {
@@ -167,15 +164,15 @@ impl OrderBook {
         }
     }
 
-    fn cancel(&mut self, id: u128) -> bool {
+    fn cancel(&mut self, id: Uuid) -> bool {
         if let Some((price, idx)) = self.arena.get(id) {
-            if let Some(ref mut queue) = self.asks.get_mut(&price) {
+            if let Some(queue) = self.asks.get_mut(&OrderedFloat(price)) {
                 if let Some(i) = queue.iter().position(|i| *i == idx) {
                     queue.remove(i);
+                    self.update_best_ask();
                 }
-                self.update_best_ask();
             }
-            if let Some(ref mut queue) = self.bids.get_mut(&price) {
+            if let Some(queue) = self.bids.get_mut(&OrderedFloat(price)) {
                 if let Some(i) = queue.iter().position(|i| *i == idx) {
                     queue.remove(i);
                 }
@@ -185,12 +182,7 @@ impl OrderBook {
         self.arena.delete(&id)
     }
 
-    fn market(
-        &mut self,
-        id: u128,
-        side: Side,
-        qty: u64,
-    ) -> (Vec<FillMetadata>, bool, u64) {
+    fn market(&mut self, id: Uuid, side: Side, qty: f64) -> (Vec<FillMetadata>, bool, f64) {
         let mut fills = Vec::new();
 
         let remaining_qty = match side {
@@ -198,67 +190,65 @@ impl OrderBook {
             Side::Ask => self.match_with_bids(id, qty, &mut fills, None),
         };
 
-        let partial = remaining_qty > 0;
+        let partial = remaining_qty > 0.0;
 
         (fills, partial, qty - remaining_qty)
     }
 
     fn limit(
         &mut self,
-        id: u128,
+        id: Uuid,
         side: Side,
-        qty: u64,
-        price: u64,
-    ) -> (Vec<FillMetadata>, bool, u64) {
+        qty: f64,
+        price: f64,
+    ) -> (Vec<FillMetadata>, bool, f64) {
         let mut partial = false;
         let remaining_qty;
         let mut fills: Vec<FillMetadata> = Vec::new();
 
         match side {
             Side::Bid => {
-                remaining_qty =
-                    self.match_with_asks(id, qty, &mut fills, Some(price));
-                if remaining_qty > 0 {
+                remaining_qty = self.match_with_asks(id, qty, &mut fills, Some(price));
+                if remaining_qty > 0.0 {
                     partial = true;
                     let index = self.arena.insert(id, price, remaining_qty);
                     let queue_capacity = self.default_queue_capacity;
                     self.bids
-                        .entry(price)
+                        .entry(OrderedFloat(price))
                         .or_insert_with(|| Vec::with_capacity(queue_capacity))
                         .push(index);
                     match self.best_bid {
                         None => {
-                            self.best_bid = Some(price);
+                            self.best_bid = Some(OrderedFloat(price));
                         }
-                        Some(b) if price > b => {
-                            self.best_bid = Some(price);
+                        Some(b) if price > *b => {
+                            self.best_bid = Some(OrderedFloat(price));
                         }
                         _ => {}
                     };
                 }
             }
             Side::Ask => {
-                remaining_qty =
-                    self.match_with_bids(id, qty, &mut fills, Some(price));
-                if remaining_qty > 0 {
+                remaining_qty = self.match_with_bids(id, qty, &mut fills, Some(price));
+                if remaining_qty > 0.0 {
                     partial = true;
                     let index = self.arena.insert(id, price, remaining_qty);
                     if let Some(a) = self.best_ask {
-                        if price < a {
-                            self.best_ask = Some(price);
+                        if price < *a {
+                            self.best_ask = Some(OrderedFloat(price));
                         }
                     }
                     let queue_capacity = self.default_queue_capacity;
                     self.asks
-                        .entry(price)
+                        .entry(OrderedFloat(price))
                         .or_insert_with(|| Vec::with_capacity(queue_capacity))
                         .push(index);
                     match self.best_ask {
                         None => {
-                            self.best_ask = Some(price);
+                            self.best_ask = Some(OrderedFloat(price));
                         }
-                        Some(a) if price < a => {
-                            self.best_ask = Some(price);
+                        Some(a) if price < *a => {
+                            self.best_ask = Some(OrderedFloat(price));
                         }
                         _ => {}
                     };
@@ -271,11 +261,11 @@ impl OrderBook {
 
     fn match_with_asks(
         &mut self,
-        id: u128,
-        qty: u64,
+        id: Uuid,
+        qty: f64,
         fills: &mut Vec<FillMetadata>,
-        limit_price: Option<u64>,
-    ) -> u64 {
+        limit_price: Option<f64>,
+    ) -> f64 {
         let mut remaining_qty = qty;
         let mut update_bid_ask = false;
         for (ask_price, queue) in self.asks.iter_mut() {
@@ -287,21 +277,15 @@ impl OrderBook {
                 update_bid_ask = false;
             }
             if let Some(lp) = limit_price {
-                if lp < *ask_price {
+                if lp < **ask_price {
                     break;
                 }
             }
-            if remaining_qty == 0 {
+            if remaining_qty == 0.0 {
                 break;
             }
-            let filled_qty = Self::process_queue(
-                &mut self.arena,
-                queue,
-                remaining_qty,
-                id,
-                Side::Bid,
-                fills,
-            );
+            let filled_qty =
+                Self::process_queue(&mut self.arena, queue, remaining_qty, id, Side::Bid, fills);
             if queue.is_empty() {
                 update_bid_ask = true;
             }
@@ -314,11 +298,11 @@ impl OrderBook {
 
     fn match_with_bids(
         &mut self,
-        id: u128,
-        qty: u64,
+        id: Uuid,
+        qty: f64,
         fills: &mut Vec<FillMetadata>,
-        limit_price: Option<u64>,
-    ) -> u64 {
+        limit_price: Option<f64>,
+    ) -> f64 {
         let mut remaining_qty = qty;
         let mut update_bid_ask = false;
         for (bid_price, queue) in self.bids.iter_mut().rev() {
@@ -330,21 +314,15 @@ impl OrderBook {
                 update_bid_ask = false;
             }
             if let Some(lp) = limit_price {
-                if lp > *bid_price {
+                if lp > **bid_price {
                     break;
                 }
             }
-            if remaining_qty == 0 {
+            if remaining_qty == 0.0 {
                 break;
             }
-            let filled_qty = Self::process_queue(
-                &mut self.arena,
-                queue,
-                remaining_qty,
-                id,
-                Side::Ask,
-                fills,
-            );
+            let filled_qty =
+                Self::process_queue(&mut self.arena, queue, remaining_qty, id, Side::Ask, fills);
             if queue.is_empty() {
                 update_bid_ask = true;
             }
@@ -361,35 +339,34 @@ impl OrderBook {
     }
 
     fn update_best_bid(&mut self) {
-        let mut cur_bids =
-            self.bids.iter().rev().filter(|(_, q)| !q.is_empty());
+        let mut cur_bids = self.bids.iter().rev().filter(|(_, q)| !q.is_empty());
         self.best_bid = cur_bids.next().map(|(p, _)| *p);
     }
 
     fn process_queue(
         arena: &mut OrderArena,
         opposite_orders: &mut Vec<usize>,
-        remaining_qty: u64,
-        id: u128,
+        remaining_qty: f64,
+        id: Uuid,
         side: Side,
         fills: &mut Vec<FillMetadata>,
-    ) -> u64 {
+    ) -> f64 {
         let mut qty_to_fill = remaining_qty;
-        let mut filled_qty = 0;
+        let mut filled_qty = 0.0;
         let mut filled_index = None;
 
         for (index, head_order_idx) in opposite_orders.iter_mut().enumerate() {
-            if qty_to_fill == 0 {
+            if qty_to_fill == 0.0 {
                 break;
             }
             let head_order = &mut arena[*head_order_idx];
             let traded_price = head_order.price;
             let available_qty = head_order.qty;
-            if available_qty == 0 {
+            if available_qty == 0.0 {
                 filled_index = Some(index);
                 continue;
             }
-            let traded_quantity: u64;
+            let traded_quantity: f64;
             let filled;
 
             if qty_to_fill >= available_qty {
@@ -399,7 +376,7 @@ impl OrderBook {
                 filled = true;
             } else {
                 traded_quantity = qty_to_fill;
-                qty_to_fill = 0;
+                qty_to_fill = 0.0;
                 filled = false;
             }
             head_order.qty -= traded_quantity;
@@ -419,5 +396,45 @@ impl OrderBook {
         }
 
         filled_qty
+    }
+
+    pub fn depth(&self, levels: usize) -> BookDepth {
+        let mut asks: Vec<BookLevel> = Vec::with_capacity(levels);
+        let mut bids: Vec<BookLevel> = Vec::with_capacity(levels);
+
+        for (i, (ask_price, queue)) in self.asks.iter().enumerate() {
+            if i > levels {
+                break;
+            }
+            let mut qty = 0.0;
+            // println!("queue: {:?}", queue);
+            for idx in queue {
+                // println!("idx: {:?}", idx);
+                qty += self.arena[*idx].qty;
+            }
+            if qty > 0.0 {
+                asks.push(BookLevel {
+                    price: **ask_price,
+                    qty,
+                });
+            }
+        }
+
+        for (i, (bid_price, queue)) in self.bids.iter().enumerate() {
+            if i > levels {
+                break;
+            }
+            let mut qty = 0.0;
+            for idx in queue {
+                qty += self.arena[*idx].qty;
+            }
+            if qty > 0.0 {
+                bids.push(BookLevel {
+                    price: **bid_price,
+                    qty,
+                });
+            }
+        }
+        BookDepth { levels, asks, bids }
     }
 }
