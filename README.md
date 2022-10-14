@@ -40,10 +40,14 @@ The simulations were run in my laptop with these specs:
 * System type	64-bit operating system, x64-based processor
 
 Created an Orderbook with capacity of 1mln orders and queues per price level of 100k. Processed 1mln orders at 664644 Transactions Per Second (TPS). 
-<ATACH IMAGE HERE>
+
+<img src="./images/tps_1mln.png"/>
+
 Ran another simulation multiplying the stats of the previous one by 10x and achieved 656749 TPS.
 
 It's important to note that the orders are normally distributed around current price. If the orders were evenly distributed accross N levels, it would be unrealistic since it wouldn't simulate market dynamics. Processing evenly distributed orders yields 2516276 TPS, the reason is because most of them are Insert, which is less expensive than Cancel or Update operations.
+
+See all the stats on the following notebook: [Analyzing_orderbook.ipynb](Analyzing_orderbook.ipynb)
 
 ## Improvements
 * Orders currently are generated at just one precise moment in time. Would be nice to create random market price and generate N orders following the dynamic price.
