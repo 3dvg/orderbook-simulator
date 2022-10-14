@@ -33,7 +33,7 @@ cargo run --release --bin orderbook_simulator
 
 It will store the output in a CSV file located in the folder `executions`.
 
-After running the two commands to generate orders and executions. Go to [Analyzing_orderbook.ipynb](Analyzing_orderbook.ipynb) and click on "Run All" in your Jupyter Notebook to see all the stats for your simulation.
+After running the two commands to generate orders and executions, go to [Analyzing_orderbook.ipynb](Analyzing_orderbook.ipynb) and click on "Run All" in your Jupyter Notebook to see all the stats for your simulation.
 
 ## Notes
 The simulations were run in my laptop with these specs:
