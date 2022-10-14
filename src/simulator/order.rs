@@ -1,6 +1,9 @@
 use anyhow::Error;
 use chrono::{DateTime, Utc};
+use indicatif::ProgressBar;
+use log::*;
 use rand::{rngs::ThreadRng, thread_rng, Rng};
+use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, ops::Range};
 use tokio::sync::broadcast::{self, Receiver, Sender};
@@ -97,6 +100,7 @@ struct OrderGenerator {
     latency_max: u64,
     qty_max: f64,
     qty_decimals: u32,
+    pct_limit_orders: f64,
     instrument: String,
 }
 
@@ -108,8 +112,8 @@ impl OrderGenerator {
         //     _ => OrderKind::default(),
         // }
         //70% provide liquidity
-        let n =  rng.gen_range(0.00..0.99);
-        if n < 0.7 {
+        let n = rng.gen_range(0.00..0.99);
+        if n < self.pct_limit_orders {
             OrderKind::Limit
         } else {
             OrderKind::Market
@@ -126,10 +130,14 @@ impl OrderGenerator {
 
     fn get_price(&self, rng: &mut ThreadRng, kind: &OrderKind, side: &OrderSide) -> f64 {
         let mut price: f64 = self.price;
+        // let dist = Normal::new(self.price, self.price_dev).unwrap();
+        // let dist = Normal::from_mean_cv(self.price, 0.01).unwrap();
         if *kind == OrderKind::Limit {
             match side {
-                OrderSide::Buy => price = self.price * (1.0 + rng.gen_range(-self.price_dev..0.0)),
-                OrderSide::Sell => price = self.price * (1.0 + rng.gen_range(0.0..self.price_dev)),
+                OrderSide::Buy => price = self.price * (1.0 + rng.gen_range(-0.1..0.0)),
+                OrderSide::Sell => price = self.price * (1.0 + rng.gen_range(0.0..0.1)),
+                // OrderSide::Buy => price = dist.sample(rng),
+                // OrderSide::Sell => price = dist.sample(rng),
             }
         }
 
@@ -139,11 +147,11 @@ impl OrderGenerator {
     }
 
     fn get_qty(&self, rng: &mut ThreadRng, kind: &OrderKind) -> f64 {
-        // If is market, the qty will be no more than half the qty for limits, with a mean of 1/4th the size 
+        // If is market, the qty will be no more than half the qty for limits, with a max of 1/4th the size
         // of limits. This will make the OB liquidity to increase
         let mut qty = match kind {
             OrderKind::Limit => rng.gen_range(1.0..self.qty_max),
-            OrderKind::Market => rng.gen_range(0.0..0.5) * rng.gen_range(1.0..self.qty_max)
+            OrderKind::Market => rng.gen_range(0.0..0.25) * rng.gen_range(1.0..self.qty_max),
         };
         qty = f64::trunc(qty * 10_u64.pow(self.qty_decimals) as f64)
             / 10_u64.pow(self.qty_decimals) as f64;
@@ -307,6 +315,7 @@ impl OrderSimulation {
         latency_max: u64,
         qty_max: f64,
         qty_decimals: u32,
+        pct_limit_orders: f64,
         instrument: String,
     ) -> Self {
         if latency_max < latency_min {
@@ -315,7 +324,7 @@ impl OrderSimulation {
         if price < price_dev {
             panic!("Price has to be greater than price_dev")
         }
-        let (sender, _receiver) = broadcast::channel(1_000_000);
+        let (sender, _receiver) = broadcast::channel(10_000_000);
         let traders: Vec<Trader> = generate_traders(n_traders);
         let generator = OrderGenerator {
             max_orders,
@@ -328,6 +337,7 @@ impl OrderSimulation {
             latency_max,
             qty_max,
             qty_decimals,
+            pct_limit_orders,
             instrument,
         };
         Self { generator, sender }
@@ -345,12 +355,17 @@ impl OrderSimulation {
         let mut tasks = vec![];
 
         let receiver = self.sender.subscribe();
+        let bar = ProgressBar::new(n_chunks);
+
+        info!("Spawning {n_chunks} tasks to generate {max_orders} orders");
         for chunk in order_chunks {
             let simulation = self.clone();
-            println!("running chunk {:?}...", chunk);
+            // println!("running chunk {:?}...", chunk);
             let task = tokio::spawn(run_orders(chunk, simulation));
             tasks.push(task);
+            bar.inc(1);
         }
+        bar.finish();
         let _join_result = futures::future::join_all(tasks).await;
         receiver
     }
@@ -388,19 +403,6 @@ impl Default for OrderSimulation {
     fn default() -> Self {
         // gen
         // Self::new(1_000_000, 100_000, 1000, 142.45, 0.5, 2, 0, 1, 10_000.0, 0, "AAPL".to_string())
-        Self::new(
-            10_000_000,
-            1_000_000,
-            1000,
-            100.0,
-            0.02,
-            2,
-            0,
-            1,
-            10_000.0,
-            0,
-            "AAPL".to_string(),
-        )
         // Self::new(
         //     1_000_000,
         //     100_000,
@@ -412,15 +414,15 @@ impl Default for OrderSimulation {
         //     1,
         //     10_000.0,
         //     0,
+        //     0.7,
         //     "AAPL".to_string(),
         // )
-        // dev
         // Self::new(
+        //     10_000_000,
+        //     1_000_000,
         //     1000,
-        //     10,
-        //     10,
-        //     142.45,
-        //     0.5,
+        //     100.0,
+        //     0.02,
         //     2,
         //     0,
         //     1,
@@ -428,6 +430,21 @@ impl Default for OrderSimulation {
         //     0,
         //     "AAPL".to_string(),
         // )
+        // dev
+        Self::new(
+            1000,
+            10,
+            10,
+            100.0,
+            2.0,
+            2,
+            0,
+            1,
+            10_000.0,
+            0,
+            0.75,
+            "AAPL".to_string(),
+        )
     }
 }
 

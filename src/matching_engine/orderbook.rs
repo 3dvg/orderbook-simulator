@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::matching_engine::arena::OrderArena;
 use crate::matching_engine::models::{FillMetadata, OrderEvent, OrderType, Side, Trade};
 
-use super::models::{BookLevel, BookDepth};
+use super::models::{BookDepth, BookLevel};
 
 const DEFAULT_ARENA_CAPACITY: usize = 1_000_000;
 const DEFAULT_QUEUE_CAPACITY: usize = 100_000;
@@ -407,9 +407,7 @@ impl OrderBook {
                 break;
             }
             let mut qty = 0.0;
-            // println!("queue: {:?}", queue);
             for idx in queue {
-                // println!("idx: {:?}", idx);
                 qty += self.arena[*idx].qty;
             }
             if qty > 0.0 {

@@ -10,11 +10,9 @@ pub struct OrderArena {
 
 impl OrderArena {
     pub fn new(capacity: usize) -> Self {
-        let list = Self {
+        Self {
             order_map: IndexMap::with_capacity(capacity),
-        };
-
-        list
+        }
     }
 
     pub fn get(&self, id: Uuid) -> Option<(f64, usize)> {
