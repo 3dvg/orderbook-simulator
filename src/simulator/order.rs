@@ -130,14 +130,14 @@ impl OrderGenerator {
 
     fn get_price(&self, rng: &mut ThreadRng, kind: &OrderKind, side: &OrderSide) -> f64 {
         let mut price: f64 = self.price;
-        // let dist = Normal::new(self.price, self.price_dev).unwrap();
+        let dist = Normal::new(self.price, self.price_dev).unwrap();
         // let dist = Normal::from_mean_cv(self.price, 0.01).unwrap();
         if *kind == OrderKind::Limit {
             match side {
-                OrderSide::Buy => price = self.price * (1.0 + rng.gen_range(-0.1..0.0)),
-                OrderSide::Sell => price = self.price * (1.0 + rng.gen_range(0.0..0.1)),
-                // OrderSide::Buy => price = dist.sample(rng),
-                // OrderSide::Sell => price = dist.sample(rng),
+                // OrderSide::Buy => price = self.price * (1.0 + rng.gen_range(-0.1..0.0)),
+                // OrderSide::Sell => price = self.price * (1.0 + rng.gen_range(0.0..0.1)),
+                OrderSide::Buy => price = dist.sample(rng),
+                OrderSide::Sell => price = dist.sample(rng),
             }
         }
 

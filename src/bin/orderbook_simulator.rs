@@ -5,6 +5,7 @@ use csv::{Writer};
 use indicatif::ProgressBar;
 use log::{info, LevelFilter};
 use std::time::Instant;
+use std::fs;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -12,7 +13,10 @@ async fn main() -> Result<(), Error> {
         .filter_level(LevelFilter::Info)
         .init();
 
-    let reader_path = "././order_simulations/orders_non_normdistr.csv";
+
+    fs::create_dir_all("././executions")?;
+
+    let reader_path = "././order_simulations/orders.csv";
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .from_path(reader_path)?;
@@ -28,7 +32,7 @@ async fn main() -> Result<(), Error> {
     let mut ob = OrderBook::default();
     info!("Initialized Orderbook");
 
-    let executions_path = "././executions/orders_non_normdistr.csv";
+    let executions_path = "././executions/orders.csv";
     let mut wtr = Writer::from_path(executions_path)?;
     let bar = ProgressBar::new(total_orders);
     info!("Executing orders and saving the executions in {executions_path}");

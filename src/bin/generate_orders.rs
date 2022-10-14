@@ -2,7 +2,7 @@ use app::{OrderSimulation};
 use csv::Writer;
 use indicatif::ProgressBar;
 use log::{info, LevelFilter};
-use std::error::Error;
+use std::{error::Error, fs};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     pretty_env_logger::formatted_timed_builder()
@@ -11,6 +11,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // let simulation = OrderSimulation::default();
     
+    fs::create_dir_all("././order_simulations")?;
+
     let max_orders = 1_000_000;
     let n_traders = 100_000;
     let n_tasks = 1_000;
@@ -41,7 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut receiver = simulation.run().await;
 
-    let path = "././order_simulations/orders_non_normdistr.csv";
+    let path = "././order_simulations/orders.csv";
     let mut wtr = Writer::from_path(path)?;
     info!("Saving simulated orders in {path}");
     let bar = ProgressBar::new(max_orders);
