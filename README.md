@@ -40,6 +40,9 @@ The simulations were run in my laptop with these specs:
 * Processor	11th Gen Intel(R) Core(TM) i7-1185G7 @ 3.00GHz   1.80 GHz
 * Installed RAM	16.0 GB (15.4 GB usable)
 * System type	64-bit operating system, x64-based processor
+* rustc 1.63.0
+* cargo 1.63.0
+* Python 3.10.8
 
 Created an Orderbook with capacity of 1mln orders and queues per price level of 100k. Processed 1mln orders at 664644 Transactions Per Second (TPS). 
 
