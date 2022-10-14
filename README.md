@@ -25,7 +25,7 @@ It will store the output in a CSV file located in the folder `order_simulations`
 Efficient orderbook able to handle over 500k transactions per second. 
 Consists of two `BTreeMaps<Price, Vec<OrderIdx>>`, one for asks and another one for bids. `Vec<OrderIdx>` store indices for each order. Orders are stored in an `IndexMap<OrderIdx, Uuid, LimitOrder>`.
 
-It's able to find a Price level in O(log(n)). Insertions, deletes and updates have an average complexity of O(1).
+It's able to find a Price level in O(log(n)). Insertions have an average complexity of O(1), deletes and updates O(n).
 
 To run it: 
 ```
